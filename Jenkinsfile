@@ -133,16 +133,15 @@ pipeline {
         script {
           // Basic health checks: MySQL healthy, backend responds on /api/products, frontend serves index
           if (isUnix()) {
-            sh """
+            sh '''
               set -euxo pipefail
               # Check MySQL health
               docker inspect ourstore-mysql --format '{{json .State.Health.Status}}' | grep -i healthy
-              # Curl backend (retry)
-              for i in $(seq 1 12); do curl -sSf http://localhost:8081/actuator/health && break || sleep 5; done
-              curl -sS http://localhost:8081/api/products || true
+              # Curl backend (retry on /api/products instead of actuator)
+              for i in $(seq 1 12); do curl -sSf http://localhost:8081/api/products && break || sleep 5; done
               # Curl frontend
               curl -sS http://localhost:8082 | head -n 5
-            """
+            '''
           } else {
             bat """
               @echo on
@@ -150,7 +149,7 @@ pipeline {
               if NOT "%DB_HEALTH%"=="healthy" (
                 echo MySQL not healthy yet & exit /b 1
               )
-              powershell -Command "$ErrorActionPreference='SilentlyContinue'; for($i=0;$i -lt 12;$i++){ if((iwr http://localhost:8081/actuator/health).StatusCode -eq 200){exit 0}; Start-Sleep -s 5 }; exit 1"
+              powershell -Command "$ErrorActionPreference='SilentlyContinue'; for($i=0;$i -lt 12;$i++){ try { if((iwr http://localhost:8081/api/products -UseBasicParsing).StatusCode -eq 200){ exit 0 } } catch {} ; Start-Sleep -s 5 }; exit 1"
               powershell -Command "iwr http://localhost:8081/api/products -UseBasicParsing | select -exp Content"  
               powershell -Command "iwr http://localhost:8082 -UseBasicParsing | select -exp Content | Select-Object -First 5"
             """
