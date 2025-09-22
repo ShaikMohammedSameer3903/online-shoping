@@ -163,6 +163,7 @@ pipeline {
           } else {
             bat '''
               @echo on
+              setlocal enabledelayedexpansion
               rem Check MySQL health
               for /f %%A in ('docker inspect ourstore-mysql --format "{{.State.Health.Status}}"') do set DB_HEALTH=%%A
               if NOT "%DB_HEALTH%"=="healthy" (
@@ -184,6 +185,7 @@ pipeline {
               rem Show simple outputs
               curl -s http://localhost:8081/api/products
               curl -s http://localhost:8082 | more +1
+              endlocal
             '''
           }
         }
