@@ -161,16 +161,30 @@ pipeline {
               curl -sS http://localhost:8082 | head -n 5
             '''
           } else {
-            bat """
+            bat '''
               @echo on
+              rem Check MySQL health
               for /f %%A in ('docker inspect ourstore-mysql --format "{{.State.Health.Status}}"') do set DB_HEALTH=%%A
               if NOT "%DB_HEALTH%"=="healthy" (
                 echo MySQL not healthy yet & exit /b 1
               )
-              powershell -Command "$ErrorActionPreference='SilentlyContinue'; for($i=0;$i -lt 12;$i++){ try { if((iwr http://localhost:8081/api/products -UseBasicParsing).StatusCode -eq 200){ exit 0 } } catch {} ; Start-Sleep -s 5 }; exit 1"
-              powershell -Command "iwr http://localhost:8081/api/products -UseBasicParsing | select -exp Content"  
-              powershell -Command "iwr http://localhost:8082 -UseBasicParsing | select -exp Content | Select-Object -First 5"
-            """
+
+              rem Retry backend /api/products up to 12 times (about 60s)
+              set RET=1
+              for /L %%i in (1,1,12) do (
+                curl -s -o NUL -w "%%{http_code}" http://localhost:8081/api/products > httpcode.txt
+                set /p CODE=<httpcode.txt
+                del httpcode.txt
+                if "!CODE!"=="200" ( set RET=0 & goto :backend_ready )
+                ping -n 6 127.0.0.1 >NUL
+              )
+              :backend_ready
+              if %RET% NEQ 0 exit /b 1
+
+              rem Show simple outputs
+              curl -s http://localhost:8081/api/products
+              curl -s http://localhost:8082 | more +1
+            '''
           }
         }
       }
