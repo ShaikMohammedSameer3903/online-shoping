@@ -19,6 +19,8 @@ pipeline {
     BACKEND_IMAGE = "${params.IMAGE_PREFIX}/ourstore-backend"
     FRONTEND_IMAGE = "${params.IMAGE_PREFIX}/ourstore-frontend"
     IMAGE_TAG = "${env.BUILD_NUMBER}"
+    KEEP_RUNNING = "${params.KEEP_RUNNING ?: 'false'}"
+    COMPOSE_TIMEOUT = '120'
   }
   stages {
     stage('Checkout') {
@@ -74,6 +76,89 @@ pipeline {
       }
     }
 
+    stage('Compose: Validate and Prepare') {
+      steps {
+        script {
+          if (isUnix()) {
+            sh '''
+              set -euxo pipefail
+              docker --version
+              docker compose version
+              # Ensure external DB volume exists (idempotent)
+              docker volume create ourstore_db_data >/dev/null
+              # Validate compose file
+              docker compose config -q
+            '''
+          } else {
+            bat '''
+              @echo on
+              docker --version
+              docker compose version
+              rem Ensure external DB volume exists (idempotent)
+              docker volume create ourstore_db_data
+              rem Validate compose file
+              docker compose config -q
+            '''
+          }
+        }
+      }
+    }
+
+    stage('Compose: Up stack') {
+      steps {
+        script {
+          if (isUnix()) {
+            sh '''
+              set -euxo pipefail
+              # Bring stack up (recreate, build)
+              docker compose down || true
+              docker compose up -d --build
+              # Wait for services
+              docker compose ps
+            '''
+          } else {
+            bat '''
+              @echo on
+              docker compose down
+              docker compose up -d --build
+              docker compose ps
+            '''
+          }
+        }
+      }
+    }
+
+    stage('Smoke tests') {
+      steps {
+        script {
+          // Basic health checks: MySQL healthy, backend responds on /api/products, frontend serves index
+          if (isUnix()) {
+            sh """
+              set -euxo pipefail
+              # Check MySQL health
+              docker inspect ourstore-mysql --format '{{json .State.Health.Status}}' | grep -i healthy
+              # Curl backend (retry)
+              for i in $(seq 1 12); do curl -sSf http://localhost:8081/actuator/health && break || sleep 5; done
+              curl -sS http://localhost:8081/api/products || true
+              # Curl frontend
+              curl -sS http://localhost:8082 | head -n 5
+            """
+          } else {
+            bat """
+              @echo on
+              for /f %%A in ('docker inspect ourstore-mysql --format "{{.State.Health.Status}}"') do set DB_HEALTH=%%A
+              if NOT "%DB_HEALTH%"=="healthy" (
+                echo MySQL not healthy yet & exit /b 1
+              )
+              powershell -Command "$ErrorActionPreference='SilentlyContinue'; for($i=0;$i -lt 12;$i++){ if((iwr http://localhost:8081/actuator/health).StatusCode -eq 200){exit 0}; Start-Sleep -s 5 }; exit 1"
+              powershell -Command "iwr http://localhost:8081/api/products -UseBasicParsing | select -exp Content"  
+              powershell -Command "iwr http://localhost:8082 -UseBasicParsing | select -exp Content | Select-Object -First 5"
+            """
+          }
+        }
+      }
+    }
+
     stage('Push images (optional)') {
       when {
         expression { return params.REGISTRY?.trim() && params.REGISTRY_CREDENTIALS_ID?.trim() }
@@ -108,6 +193,18 @@ pipeline {
   post {
     always {
       archiveArtifacts artifacts: "${BACKEND_DIR}/target/**/*.jar", allowEmptyArchive: true
+      script {
+        if (env.KEEP_RUNNING?.toBoolean()) {
+          echo "KEEP_RUNNING=true -> leaving stack up"
+        } else {
+          echo "Tearing down stack after build"
+          if (isUnix()) {
+            sh 'docker compose down || true'
+          } else {
+            bat 'docker compose down'
+          }
+        }
+      }
     }
   }
 }
