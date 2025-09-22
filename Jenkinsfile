@@ -77,10 +77,19 @@ pipeline {
     stage('Build Docker images') {
       steps {
         script {
-          // Build backend image
-          def be = docker.build("${env.BACKEND_IMAGE}:${env.IMAGE_TAG}", "-f ${env.BACKEND_DIR}/Dockerfile ${env.BACKEND_DIR}")
-          // Build frontend image
-          def fe = docker.build("${env.FRONTEND_IMAGE}:${env.IMAGE_TAG}", "-f ${env.FRONTEND_DIR}/Dockerfile ${env.FRONTEND_DIR}")
+          if (isUnix()) {
+            sh """
+              set -euxo pipefail
+              docker build -t ${BACKEND_IMAGE}:${IMAGE_TAG} -f ${BACKEND_DIR}/Dockerfile ${BACKEND_DIR}
+              docker build -t ${FRONTEND_IMAGE}:${IMAGE_TAG} -f ${FRONTEND_DIR}/Dockerfile ${FRONTEND_DIR}
+            """
+          } else {
+            bat """
+              @echo on
+              docker build -t %BACKEND_IMAGE%:%IMAGE_TAG% -f %BACKEND_DIR%/Dockerfile %BACKEND_DIR%
+              docker build -t %FRONTEND_IMAGE%:%IMAGE_TAG% -f %FRONTEND_DIR%/Dockerfile %FRONTEND_DIR%
+            """
+          }
         }
       }
     }
@@ -173,13 +182,39 @@ pipeline {
       }
       steps {
         script {
-          docker.withRegistry(params.REGISTRY, params.REGISTRY_CREDENTIALS_ID) {
-            docker.image("${env.BACKEND_IMAGE}:${env.IMAGE_TAG}").push()
-            docker.image("${env.FRONTEND_IMAGE}:${env.IMAGE_TAG}").push()
-
-            if (env.BRANCH_NAME == 'main' || env.BRANCH_NAME == 'master') {
-              docker.image("${env.BACKEND_IMAGE}:${env.IMAGE_TAG}").push('latest')
-              docker.image("${env.FRONTEND_IMAGE}:${env.IMAGE_TAG}").push('latest')
+          withCredentials([usernamePassword(credentialsId: params.REGISTRY_CREDENTIALS_ID, usernameVariable: 'DOCKER_USER', passwordVariable: 'DOCKER_PASS')]) {
+            if (isUnix()) {
+              sh '''
+                set -euxo pipefail
+                echo "$DOCKER_PASS" | docker login -u "$DOCKER_USER" --password-stdin ${REGISTRY}
+                docker push ${BACKEND_IMAGE}:${IMAGE_TAG}
+                docker push ${FRONTEND_IMAGE}:${IMAGE_TAG}
+              '''
+              sh '''
+                if [ "$BRANCH_NAME" = "main" ] || [ "$BRANCH_NAME" = "master" ]; then
+                  docker tag ${BACKEND_IMAGE}:${IMAGE_TAG} ${BACKEND_IMAGE}:latest
+                  docker tag ${FRONTEND_IMAGE}:${IMAGE_TAG} ${FRONTEND_IMAGE}:latest
+                  docker push ${BACKEND_IMAGE}:latest
+                  docker push ${FRONTEND_IMAGE}:latest
+                fi
+              '''
+            } else {
+              bat """
+                @echo on
+                echo %DOCKER_PASS% | docker login -u "%DOCKER_USER%" --password-stdin %REGISTRY%
+                docker push %BACKEND_IMAGE%:%IMAGE_TAG%
+                docker push %FRONTEND_IMAGE%:%IMAGE_TAG%
+              """
+              bat """
+                @echo on
+                if "%BRANCH_NAME%"=="main" ( 
+                  docker tag %BACKEND_IMAGE%:%IMAGE_TAG% %BACKEND_IMAGE%:latest & docker push %BACKEND_IMAGE%:latest 
+                  docker tag %FRONTEND_IMAGE%:%IMAGE_TAG% %FRONTEND_IMAGE%:latest & docker push %FRONTEND_IMAGE%:latest 
+                ) else if ("%BRANCH_NAME%"=="master") (
+                  docker tag %BACKEND_IMAGE%:%IMAGE_TAG% %BACKEND_IMAGE%:latest & docker push %BACKEND_IMAGE%:latest 
+                  docker tag %FRONTEND_IMAGE%:%IMAGE_TAG% %FRONTEND_IMAGE%:latest & docker push %FRONTEND_IMAGE%:latest 
+                )
+              """
             }
           }
         }
