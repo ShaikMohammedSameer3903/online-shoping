@@ -1,0 +1,12 @@
+# Maven and IDE
+/target
+/.mvn
+mvnw
+mvnw.cmd
+*.iml
+.idea/
+
+# Git and OS
+.git/
+.DS_Store
+*.log
