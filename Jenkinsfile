@@ -13,6 +13,7 @@ pipeline {
     string(name: 'IMAGE_PREFIX', defaultValue: 'ourstore', description: 'Registry namespace/repo prefix (e.g. your-dockerhub-username)')
     string(name: 'REGISTRY_CREDENTIALS_ID', defaultValue: '', description: 'Jenkins credentials ID (username/password) for registry auth')
     booleanParam(name: 'RUN_TESTS', defaultValue: false, description: 'Run backend unit tests (may fail if tests are misconfigured). If false, tests are skipped and project is built.')
+    booleanParam(name: 'KEEP_RUNNING', defaultValue: true, description: 'If true, do NOT stop the Docker Compose stack after a successful pipeline run.')
   }
   environment {
     BACKEND_DIR = 's111-project-backend'
